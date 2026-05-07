@@ -9,7 +9,7 @@ def test_crafy_captcha():
     
     try:
         # Por defecto usará el directorio temporal del sistema operativo
-        captcha = CrafyCAPTCHA(public_key, secret_key)
+        captcha = CrafyCAPTCHA(public_key, secret_key, 'http://localhost/proyectos/CrafyCAPTCHA/api')
         
         # 2. Probar la creación de un flujo (create_flow)
         print("⏳ Generando opciones de flow...")
@@ -23,6 +23,13 @@ def test_crafy_captcha():
         
         print("✅ Flow encriptado generado exitosamente:")
         print(flow_options)
+        print("\n-----------------------------------\n")
+
+        # Esto prueba la generación de Nonces y la encriptación con PyNaCl/Cryptography
+        public_token = captcha.get_public_token()
+        
+        print("✅ Token público generado exitosamente:")
+        print(public_token)
         print("\n-----------------------------------\n")
 
         # 3. Limpiar los nonces temporales creados para no ensuciar el disco

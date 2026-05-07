@@ -43,6 +43,7 @@ class _Cryptor:
         self.secret = secret.encode('utf-8')
         
         # Derivación de llaves pre-calculadas (BLAKE2b y SHA256)
+        # Se usa RawEncoder para que devuelva los 32 bytes crudos, igual que en PHP
         self.v3_key = nacl.hash.generichash(
             self.secret, 
             digest_size=self.KEY_LEN, 
@@ -179,6 +180,7 @@ class CrafyCAPTCHA:
 
         # Estado interno
         self.access_token = None
+        self.public_token = None
         self.last_flow_verify_error = None
         self._cryptor = _Cryptor(self.secret_key)
 
@@ -203,6 +205,14 @@ class CrafyCAPTCHA:
     def set_retry_status_codes(self, codes: list):
         self.retry_status_codes = codes
         return self
+
+    def get_public_token(self) -> str:
+        """
+        Obtiene el Public Token dinámicamente.
+        Si no está en memoria o caché, dispara la autenticación de forma segura.
+        """
+        self._ensure_auth()
+        return self.public_token
 
     def create_flow(self, options: dict = None) -> str:
         """
@@ -291,7 +301,7 @@ class CrafyCAPTCHA:
             clean_date = expires_at_str.replace('Z', '+00:00')
             expires_at = datetime.fromisoformat(clean_date)
             
-            # ¡LA SOLUCIÓN! Si la fecha es "ingenua" (sin timezone), la forzamos a UTC
+            # Forzar a UTC si la fecha no trae TimeZone explícito
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
                 
@@ -302,7 +312,6 @@ class CrafyCAPTCHA:
                 return False
                 
         except Exception as e:
-            # Agregamos el error original por si falla otra cosa en el futuro
             self.last_flow_verify_error = f'Fecha de expiración inválida. Detalles: {str(e)}'
             return False
 
@@ -383,40 +392,62 @@ class CrafyCAPTCHA:
             raise e
 
     def _ensure_auth(self, force_refresh: bool = False):
-        if not force_refresh and self.access_token:
+        if not force_refresh and self.access_token and self.public_token:
             return
 
+        # Intentar leer desde la caché encriptada
         if not force_refresh and os.path.exists(self.cache_file):
             try:
                 with open(self.cache_file, 'r') as f:
-                    cached = json.load(f)
-                if cached.get('token') and cached.get('expires_at') and time.time() < (cached['expires_at'] - 60):
-                    self.access_token = cached['token']
-                    return
+                    raw_content = f.read()
+                    
+                if raw_content:
+                    # Desencriptamos el contenido del archivo con la secret_key
+                    decrypted = self._cryptor.decrypt(raw_content)
+                    
+                    if decrypted:
+                        cached = json.loads(decrypted)
+                        if cached.get('token') and cached.get('public_token') and cached.get('expires_at'):
+                            if time.time() < (cached['expires_at'] - 60):
+                                self.access_token = cached['token']
+                                self.public_token = cached['public_token']
+                                return
             except Exception:
-                pass
+                pass # Si algo falla (archivo corrupto, llave incorrecta), ignoramos y volvemos a autenticar
 
+        # Solicitar nuevas credenciales al servidor
         auth_payload = {'public_key': self.public_key, 'secret_key': self.secret_key}
         response = self._send_request('authenticate', auth_payload, False)
 
-        if not response.get('token'):
-            raise Exception("CrafyCAPTCHA SDK: No se recibió token de autenticación.")
+        if not response.get('token') or not response.get('public_token'):
+            raise Exception("CrafyCAPTCHA SDK: Error en la respuesta de autenticación.")
 
         self.access_token = response['token']
-        expires_in = int(response.get('expires_in', 3600))
-        self._save_cache(self.access_token, int(time.time()) + expires_in)
+        self.public_token = response['public_token']
+        
+        expires_in = int(response.get('expires_in', 86400)) # 24 horas por defecto
+        self._save_cache(self.access_token, self.public_token, int(time.time()) + expires_in)
 
-    def _save_cache(self, token: str, expires_at: int):
-        data = json.dumps({'token': token, 'expires_at': expires_at})
+    def _save_cache(self, token: str, public_token: str, expires_at: int):
+        data_to_cache = json.dumps({
+            'token': token, 
+            'public_token': public_token,
+            'expires_at': expires_at
+        })
+        
         try:
+            # Encriptamos el JSON antes de escribirlo al disco
+            encrypted_data = self._cryptor.encrypt(data_to_cache)
+            
             with open(self.cache_file, 'w') as f:
-                f.write(data)
+                f.write(encrypted_data)
             os.chmod(self.cache_file, 0o600)
         except IOError:
             pass
 
     def _clear_cache(self):
         self.access_token = None
+        self.public_token = None
         if os.path.exists(self.cache_file):
             try:
                 os.unlink(self.cache_file)
