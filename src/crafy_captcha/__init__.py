@@ -1,0 +1,1 @@
+from .crafy_captcha import CrafyCAPTCHA

@@ -1,0 +1,9 @@
+README.md
+setup.py
+src/crafy_captcha/__init__.py
+src/crafy_captcha/crafy_captcha.py
+src/crafy_captcha.egg-info/PKG-INFO
+src/crafy_captcha.egg-info/SOURCES.txt
+src/crafy_captcha.egg-info/dependency_links.txt
+src/crafy_captcha.egg-info/requires.txt
+src/crafy_captcha.egg-info/top_level.txt

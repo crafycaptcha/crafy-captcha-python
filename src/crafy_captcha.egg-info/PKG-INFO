@@ -1,0 +1,28 @@
+Metadata-Version: 2.4
+Name: crafy-captcha
+Version: 1.0.2
+Summary: Official CrafyCAPTCHA Backend SDK for Python
+Home-page: https://github.com/crafycaptcha/crafy-captcha-python
+Author: CrafyCAPTCHA
+Author-email: hello@captcha.crafy.net
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+Requires-Dist: requests>=2.25.1
+Requires-Dist: PyNaCl>=1.4.0
+Requires-Dist: cryptography>=3.4.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+Official documentation in https://captcha.crafy.net/docs/
+
+`pip install crafy-captcha`
