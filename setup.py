@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="crafy-captcha",
-    version="1.0.3",
+    version="1.0.4",
     author="CrafyCAPTCHA",
     author_email="hello@captcha.crafy.net",
     description="Official CrafyCAPTCHA Backend SDK for Python",
