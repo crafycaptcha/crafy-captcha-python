@@ -227,15 +227,29 @@ class FileStorage(StorageAdapter):
         file_path = os.path.join(self.cache_dir, f"{key}.json")
         try:
             with open(file_path, 'r') as f:
-                return f.read()
+                content = f.read()
+            try:
+                decoded = json.loads(content)
+                if isinstance(decoded, dict) and 'e' in decoded and 'd' in decoded:
+                    if int(time.time()) <= decoded['e']:
+                        return str(decoded['d'])
+                    try:
+                        os.unlink(file_path)
+                    except OSError:
+                        pass
+                    return None
+            except Exception:
+                return content # Backward compatibility
+            return None
         except OSError:
             return None
 
     def set_cache(self, key: str, data: str, expires_at: int) -> None:
         file_path = os.path.join(self.cache_dir, f"{key}.json")
         try:
+            payload = json.dumps({'e': expires_at, 'd': data})
             with open(file_path, 'w') as f:
-                f.write(data)
+                f.write(payload)
             os.chmod(file_path, 0o600)
         except OSError:
             pass
@@ -284,8 +298,33 @@ class FileStorage(StorageAdapter):
             now = time.time()
             for file_path in files:
                 try:
-                    if os.path.isfile(file_path) and (now - os.path.getmtime(file_path) > self.nonce_ttl):
-                        os.unlink(file_path)
+                    if os.path.isfile(file_path):
+                        with open(file_path, 'r') as f:
+                            ttl_str = f.read()
+                        try:
+                            ttl = int(ttl_str)
+                            if now > ttl:
+                                os.unlink(file_path)
+                        except ValueError:
+                            os.unlink(file_path) # Si está corrupto, se borra
+                except OSError:
+                    pass
+
+        # Limpiar archivos de caché json
+        if random.randint(1, 100) == 1:
+            cache_files = glob.glob(os.path.join(self.cache_dir, '*.json'))
+            now = time.time()
+            for file_path in cache_files:
+                try:
+                    if os.path.isfile(file_path):
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                        try:
+                            decoded = json.loads(content)
+                            if isinstance(decoded, dict) and 'e' in decoded and now > decoded['e']:
+                                os.unlink(file_path)
+                        except Exception:
+                            pass
                 except OSError:
                     pass
 
@@ -368,12 +407,17 @@ class CrafyCAPTCHA:
         self.storage.store_nonce(nonce, expires_at)
 
         flow_data = options.copy()
+        
+        if 'context' in flow_data and isinstance(flow_data['context'], dict):
+            self.storage.set_cache(f'nonce_context_{nonce}', json.dumps(flow_data['context']), expires_at)
+            del flow_data['context']
+
         flow_data['nonce'] = nonce
         json_options = json.dumps(flow_data)
 
         return self._cryptor.encrypt(json_options)
 
-    def verify_flow(self, base64_payload: str) -> bool:
+    def verify_flow(self, base64_payload: str, expected_context: Optional[Dict[str, Any]] = None) -> bool:
         """Verifica un Flow completado sin llamar a la API externa."""
         self.last_flow_verify_error = None
 
@@ -456,14 +500,35 @@ class CrafyCAPTCHA:
             return False
 
         clean_nonce = re.sub(r'[^a-f0-9]', '', decrypted_nonce)
-        if clean_nonce != decrypted_nonce:
-            self.last_flow_verify_error = 'Nonce inválido.'
+        if clean_nonce != decrypted_nonce or len(clean_nonce) != 64:
+            self.last_flow_verify_error = 'Nonce inválido o de longitud incorrecta.'
             return False
+
+        if expected_context is not None:
+            saved_context_json = self.storage.get_cache(f'nonce_context_{clean_nonce}')
+            if not saved_context_json:
+                self.last_flow_verify_error = 'Context mismatch (no context saved for this flow or already used).'
+                return False
+            
+            try:
+                saved_context = json.loads(saved_context_json)
+                if not isinstance(saved_context, dict):
+                    self.last_flow_verify_error = 'Context mismatch (invalid saved context).'
+                    return False
+                for key, expected_value in expected_context.items():
+                    if key not in saved_context or saved_context[key] != expected_value:
+                        self.last_flow_verify_error = f"Context mismatch on key '{key}'."
+                        return False
+            except Exception:
+                self.last_flow_verify_error = 'Context mismatch (invalid saved context JSON).'
+                return False
 
         # Intento de consumo atómico delegando al motor de Storage
         if not self.storage.consume_nonce(clean_nonce):
             self.last_flow_verify_error = 'Nonce ya utilizado (Replay Attack).'
             return False
+
+        self.storage.delete_cache(f'nonce_context_{clean_nonce}')
 
         # Garbage Collection delegada
         self.storage.gc_nonces()
